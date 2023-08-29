@@ -26,7 +26,7 @@ The installation should take no more than a few minutes on a normal desktop comp
 
 For detailed usage, follow our step-by-step tutorial here:
 
-- [Getting Started with SIMVI](https://github.com/MingzeDong/SIMVI/blob/main/SIMVItutorial.ipynb)
+- [Getting Started with SIMVI](https://github.com/KlugerLab/SIMVI/blob/main/SIMVItutorial.ipynb)
 
 Download the dataset used for the tutorial here:
 
