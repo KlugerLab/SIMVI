@@ -65,12 +65,10 @@ class SimVIModel(BaseModelClass):
         dropout_rate: Dropout rate for neural networks.
         use_observed_lib_size: Use observed library size for RNA as scaling factor in
             mean of conditional distribution.
-        disentangle: Whether to disentangle the salient and background latent variables.
-        use_mmd: Whether to use the maximum mean discrepancy loss to force background
-            latent variables to have the same distribution for background and target
-            data.
-        mmd_weight: Weight used for the MMD loss.
-        gammas: Gamma parameters for the MMD loss.
+        lam_mi: mutual information regularization strength.
+        var_eps: minimum variance for variance encoder.
+        kl_weight: kl divergence coefficient for the MLP encoder.
+        kl_gatweight: kl divergence coefficient for the GAT encoder.
     """
 
     def __init__(
@@ -330,21 +328,8 @@ class SimVIModel(BaseModelClass):
         representation_kind: str = "all",
     ) -> np.ndarray:
         """
-        Return the latent representation for each cell.
-
-        Args:
-        ----
-        adata: AnnData object with equivalent structure to initial AnnData. If `None`,
-            defaults to the AnnData object used to initialize the model.
-        indices: Indices of cells in adata to use. If `None`, all cells are used.
-        give_mean: Give mean of distribution or sample from it.
-        batch_size: Mini-batch size for data loading into model. Defaults to full batch training.
-        representation_kind: "intrinsic", "interaction" or "all" for the corresponding
-            representation kind.
-
-        Returns
-        -------
-            A numpy array with shape `(n_cells, n_latent)`.
+        Return decoded expression for each cell.
+        Depracated
         """
         available_representation_kinds = ["intrinsic", "interaction","all"]
         assert representation_kind in available_representation_kinds, (
@@ -386,7 +371,7 @@ class SimVIModel(BaseModelClass):
         n_neighbors = 20,
     ) -> np.ndarray:
         """
-        Return the latent representation for each cell. 
+        Return the spatial effect for each cell. 
 
         Args:
         ----
@@ -395,12 +380,12 @@ class SimVIModel(BaseModelClass):
         indices: Indices of cells in adata to use. If `None`, all cells are used.
         give_mean: Give mean of distribution or sample from it.
         batch_size: Mini-batch size for data loading into model. Defaults to full batch training.
-        representation_kind: "intrinsic", "interaction" or "all" for the corresponding
+        mode: "original" or "reconstructed" for the corresponding
             representation kind.
 
         Returns
         -------
-            A numpy array with shape `(n_cells, n_latent)`.
+            A numpy array with shape `(n_cells, n_genes)`.
         """
         available_modes = ["original", "reconstructed"]
         assert mode in available_modes, (
@@ -461,20 +446,7 @@ class SimVIModel(BaseModelClass):
     ) -> np.ndarray:
         """
         Answers the what-if question: What the cell expression would be if it is in another position?
-
-        Args:
-        ----
-        Indices: Indices of cells in adata to use, in the form of list of tuples. For example: [(1,2)].
-        adata: AnnData object with equivalent structure to initial AnnData. If `None`,
-            defaults to the AnnData object used to initialize the model.
-        give_mean: Give mean of distribution or sample from it.
-        batch_size: Mini-batch size for data loading into model. Defaults to full batch training.
-        representation_kind: "intrinsic", "interaction" or "all" for the corresponding
-            representation kind.
-
-        Returns
-        -------
-            A numpy array with shape `(n_cells, n_latent)`.
+        Depracated
         """
         data = AnnTorchDataset(self.adata_manager)
         result_list = []
@@ -525,13 +497,8 @@ class SimVIModel(BaseModelClass):
             validation_size: Size of the validation set. If `None`, default to
                 `1 - train_size`. If `train_size + validation_size < 1`, the remaining
                 cells belong to the test set.
-            batch_size: Mini-batch size to use during training.
-            early_stopping: Perform early stopping. Additional arguments can be passed
-                in `**kwargs`. See :class:`~scvi.train.Trainer` for further options.
-            plan_kwargs: Keyword args for :class:`~scvi.train.TrainingPlan`. Keyword
-                arguments passed to `train()` will overwrite values present
-                in `plan_kwargs`, when appropriate.
-            **trainer_kwargs: Other keyword args for :class:`~scvi.train.Trainer`.
+            lr: Learning rate.
+            weight_decay: L2 regularization strength.
 
         Returns
         -------
