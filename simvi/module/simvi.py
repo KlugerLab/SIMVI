@@ -477,33 +477,6 @@ class SimVIModule(nn.Module):
         self,
         inference_outputs: Dict[str, torch.Tensor],
     ):
-        """
-        Compute (discriminator) loss terms for SIMVI. 
-
-        Args:
-        ----
-            concat_tensors: Tuple of data mini-batch. The first element contains
-                background data mini-batch. The second element contains target data
-                mini-batch.
-            inference_outputs: Dictionary of inference step outputs. The keys
-                are "background" and "target" for the corresponding outputs.
-            generative_outputs: Dictionary of generative step outputs. The keys
-                are "background" and "target" for the corresponding outputs.
-            kl_weight: Importance weight for KL divergence of background and salient
-                latent variables, relative to KL divergence of library size.
-
-        Returns
-        -------
-            An scvi.module.base.LossRecorder instance that records the following:
-            loss: One-dimensional tensor for overall loss used for optimization.
-            reconstruction_loss: Reconstruction loss with shape
-                `(n_samples, batch_size)` if number of latent samples > 1, or
-                `(batch_size, )` if number of latent samples == 1.
-            kl_local: KL divergence term with shape
-                `(n_samples, batch_size)` if number of latent samples > 1, or
-                `(batch_size, )` if number of latent samples == 1.
-            kl_global: One-dimensional tensor for global KL divergence term.
-        """
         psi_x = inference_outputs["z"].detach()
         psi_y = inference_outputs["z_gat"]
         
