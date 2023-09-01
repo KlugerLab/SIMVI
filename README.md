@@ -4,7 +4,9 @@ SIMVI (Spatial Interaction Modelling using Variational Inference) is a deep gene
 
 ![fig1_rep](https://github.com/MingzeDong/SIMVI/assets/68533876/88a10941-afab-440d-8fd5-95a8ef968d9d)
 
-Read our preprint on BioRxiv:
+Read our preprint on BioRxiv: 
+
+- Dong, Mingze, et al. "SIMVI reveals intrinsic and spatial-induced states in spatial omics data". bioRxiv (2023). [Link](https://www.biorxiv.org/content/10.1101/2023.08.28.554970v1)
 
 ## System requirements
 ### OS requirements
