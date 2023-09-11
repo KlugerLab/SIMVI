@@ -26,7 +26,7 @@ The installation should take no more than a few minutes on a normal desktop comp
 
 ## Usage
 
-For detailed usage, follow our step-by-step tutorial here. The tutorial should take several minutes, depending on the computational capacity.
+For detailed usage, follow our step-by-step tutorial here. The tutorial should take several minutes to compile, depending on the computational capacity.
 
 - [Getting Started with SIMVI](https://github.com/KlugerLab/SIMVI/blob/main/SIMVItutorial.ipynb)
 
