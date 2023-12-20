@@ -477,6 +477,7 @@ class SimVIModel(BaseModelClass):
         max_epochs: Optional[int] = None,
         use_gpu: Optional[Union[str, int, bool]] = None,
         train_size: float = 0.9,
+        batch_size: Optional[int] = None,
         validation_size: Optional[float] = None,
         lr = 1e-3,
         weight_decay = 1e-4,
@@ -497,8 +498,13 @@ class SimVIModel(BaseModelClass):
             validation_size: Size of the validation set. If `None`, default to
                 `1 - train_size`. If `train_size + validation_size < 1`, the remaining
                 cells belong to the test set.
-            lr: Learning rate.
-            weight_decay: L2 regularization strength.
+            batch_size: Mini-batch size to use during training.
+            early_stopping: Perform early stopping. Additional arguments can be passed
+                in `**kwargs`. See :class:`~scvi.train.Trainer` for further options.
+            plan_kwargs: Keyword args for :class:`~scvi.train.TrainingPlan`. Keyword
+                arguments passed to `train()` will overwrite values present
+                in `plan_kwargs`, when appropriate.
+            **trainer_kwargs: Other keyword args for :class:`~scvi.train.Trainer`.
 
         Returns
         -------
@@ -514,8 +520,8 @@ class SimVIModel(BaseModelClass):
         n_train, n_val = validate_data_split(self.adata_manager.adata.n_obs, train_size, validation_size)
         random_state = np.random.RandomState(seed=settings.seed)
         permutation = random_state.permutation(self.adata_manager.adata.n_obs)
-        train_mask = permutation[:n_val]
-        val_mask = permutation[n_val : (n_val + n_train)]
+        train_mask = permutation[:n_train]
+        val_mask = permutation[n_train : (n_val + n_train)]
         test_mask = permutation[(n_val + n_train) :]
 
         data = AnnTorchDataset(self.adata_manager)
@@ -525,29 +531,49 @@ class SimVIModel(BaseModelClass):
         val_loss = []
         pbar = tqdm(range(1, max_epochs + 1))
         for epoch in pbar:
-            train_loss.append(_train(self.module, data, edge_index, train_mask, optimizer).detach())
+            train_loss.append(_train(self.module, data, edge_index, train_mask, optimizer, batch_size).detach())
             val_loss.append(_eval(self.module, data, edge_index, val_mask).detach())
             pbar.set_description('Epoch '+str(epoch)+'/'+str(max_epochs))
             pbar.set_postfix(train_loss=train_loss[epoch-1].numpy(), val_loss=val_loss[epoch-1].numpy())
             #print('Epoch ',epoch)
         return train_loss, val_loss
 
-def _train(model, data, edge_index, mask, optimizer):
+def _train(model, data, edge_index, mask, optimizer, batch_size):
     model.train()
-    optimizer.zero_grad()
-    latent_dict = model.inference(data[np.arange(data.get_data('X').shape[0])],edge_index)
     #print(latent_dict)
-    latent_dict_masked = {}
-    for key, value in latent_dict.items():
-        if value is None:
-            latent_dict_masked[key] = None
-        else:
-            latent_dict_masked[key] = value[mask]
-    decoder_dict = model.generative(latent_dict_masked)
-    lossrecorder = model.loss(data[mask], latent_dict_masked, decoder_dict)
-    loss = lossrecorder.loss
-    loss.backward()
-    optimizer.step()
+    if batch_size is None:
+        optimizer.zero_grad()
+        latent_dict = model.inference(data[np.arange(data.get_data('X').shape[0])],edge_index)
+        latent_dict_masked = {}
+        for key, value in latent_dict.items():
+            if value is None:
+                latent_dict_masked[key] = None
+            else:
+                latent_dict_masked[key] = value[mask]
+            
+        decoder_dict = model.generative(latent_dict_masked)
+        lossrecorder = model.loss(data[mask], latent_dict_masked, decoder_dict)
+        loss = lossrecorder.loss
+        loss.backward()
+        optimizer.step()
+    else:
+        batch_indices = [mask[i:i + batch_size] for i in range(0, mask.shape[0], batch_size)]
+        
+        for batch_index in batch_indices:
+            optimizer.zero_grad()
+            latent_dict = model.inference(data[np.arange(data.get_data('X').shape[0])],edge_index)
+            latent_dict_masked = {}
+            for key, value in latent_dict.items():
+                if value is None:
+                    latent_dict_masked[key] = None
+                else:
+                    latent_dict_masked[key] = value[batch_index]
+            
+            decoder_dict = model.generative(latent_dict_masked)
+            lossrecorder = model.loss(data[batch_index], latent_dict_masked, decoder_dict)
+            loss = lossrecorder.loss
+            loss.backward()
+            optimizer.step()
     return loss
 
 def _eval(model, data, edge_index, mask):
