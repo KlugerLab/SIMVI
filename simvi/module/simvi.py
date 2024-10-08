@@ -12,7 +12,7 @@ from scvi.module.base import BaseModuleClass, LossRecorder, auto_move_data
 from scvi.nn import DecoderSCVI, Encoder, one_hot
 from torch.distributions import Normal
 from torch.distributions import kl_divergence as kl
-
+from torch.autograd import Variable
 
 import torch.optim as optim
 
@@ -30,9 +30,13 @@ class SimVIModule(nn.Module):
         n_input: int,
         n_batch: int = 0,
         n_hidden: int = 128,
-        n_output: int = 10,
+        n_output: int = 20,
+        n_spatial: int = 10,
         n_layers: int = 1,
         dropout_rate: float = 0.1,
+        reg_to_use: str = 'mmd',
+        dis_to_use: str = 'zinb',
+        permutation_rate: float = 0.5,
         use_observed_lib_size: bool = True,
         library_log_means: Optional[np.ndarray] = None,
         library_log_vars: Optional[np.ndarray] = None,
@@ -40,17 +44,22 @@ class SimVIModule(nn.Module):
         kl_gatweight: float = 1,
         lam_mi: float = 50,
         var_eps: float = 1e-4,
+        heads = 1,
     ):
         super().__init__()
         self.n_input = n_input
         self.n_batch = n_batch
         self.n_hidden = n_hidden
         self.n_output = n_output
+        self.n_spatial = n_spatial
         self.n_layers = n_layers
         self.dropout_rate = dropout_rate
+        self.reg_to_use = reg_to_use
+        self.permutation_rate = permutation_rate
         self.latent_distribution = "normal"
         self.dispersion = "gene"
         self.px_r = torch.nn.Parameter(torch.randn(n_input))
+        self.dis_to_use = dis_to_use
         self.use_observed_lib_size = use_observed_lib_size
         self.var_eps = var_eps
         self.lam_mi = lam_mi
@@ -79,16 +88,31 @@ class SimVIModule(nn.Module):
             n_cat_list=cat_list,
             n_layers=2,
             n_hidden=n_hidden,
-            dropout_rate=dropout_rate,
+            dropout_rate=0,
             distribution=self.latent_distribution,
-            inject_covariates=True,
-            use_batch_norm=True,
+            inject_covariates=False,
+            use_batch_norm=False,
             use_layer_norm=False,
             var_activation=None,
             var_eps = var_eps
         )
-        self.gat_mean = GATv2Conv(in_channels=n_hidden,out_channels=n_output,add_self_loops=False)
-        self.gat_var = GATv2Conv(in_channels=n_hidden,out_channels=n_output,add_self_loops=False)
+        self.gat_mean = GATv2Conv(in_channels=n_spatial,out_channels=n_spatial,add_self_loops=False,heads=heads,concat=False)
+        self.gat_var = GATv2Conv(in_channels=n_spatial,out_channels=n_spatial,add_self_loops=False,heads=heads,concat=False)
+
+        self.base_encoder2 = Encoder(
+            n_spatial,
+            n_spatial,
+            n_cat_list=cat_list,
+            n_layers=1,
+            n_hidden=n_spatial,
+            dropout_rate=dropout_rate,
+            distribution=self.latent_distribution,
+            inject_covariates=True,
+            use_batch_norm=False,
+            use_layer_norm=False,
+            var_activation=None,
+            var_eps = var_eps
+        )
 
         self.l_encoder = Encoder(
             n_input,
@@ -104,61 +128,56 @@ class SimVIModule(nn.Module):
         )
 
         self.decoder = DecoderSCVI(
-            2 * n_output,
+            n_output + n_spatial,
             n_input,
             n_cat_list=cat_list,
             n_layers=n_layers,
             n_hidden=n_hidden,
             inject_covariates=True,
-            use_batch_norm=True,
-            use_layer_norm=False,
+            use_batch_norm=False,
+            use_layer_norm=True,
         )
 
     @staticmethod
     def _get_inference_input_from_concat_tensors(
-        tensors: Dict[str, torch.Tensor]
+        tensors: Dict[str, torch.Tensor], eval_mode = False, permutation_rate = 0.5,
     ) -> Dict[str, torch.Tensor]:
         x = tensors[REGISTRY_KEYS.X_KEY]
         batch_index = tensors[REGISTRY_KEYS.BATCH_KEY]
-        input_dict = dict(x=torch.Tensor(x), batch_index=torch.Tensor(batch_index))
-        return input_dict
-
-    @staticmethod
-    def _get_generative_input_from_concat_tensors(
-        concat_tensors: Dict[str, Dict[str, torch.Tensor]], index: str
-    ) -> Dict[str, torch.Tensor]:
-        tensors = concat_tensors[index]
-        batch_index = tensors[REGISTRY_KEYS.BATCH_KEY]
-        input_dict = dict(batch_index=batch_index)
-        return input_dict
-
-    @staticmethod
-    def _get_generative_input_from_inference_outputs(
-        inference_outputs: Dict[str, Dict[str, torch.Tensor]], data_source: str
-    ) -> Dict[str, torch.Tensor]:
-        z = inference_outputs[data_source]["z"]
-        s = inference_outputs[data_source]["s"]
-        library = inference_outputs[data_source]["library"]
-        return dict(z=z, s=s, library=library)
-
-
-    @staticmethod
-    def _reshape_tensor_for_samples(tensor: torch.Tensor, n_samples: int):
-        return tensor.unsqueeze(0).expand((n_samples, tensor.size(0), tensor.size(1)))
-    
-    @auto_move_data
-    def _compute_local_library_params(
-        self, batch_index: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        n_batch = self.library_log_means.shape[1]
-        local_library_log_means = F.linear(
-            one_hot(batch_index, n_batch), self.library_log_means
-        )
-        local_library_log_vars = F.linear(
-            one_hot(batch_index, n_batch), self.library_log_vars
-        )
-        return local_library_log_means, local_library_log_vars
+        if eval_mode:
+            input_dict = dict(x=x, batch_index=batch_index)
+        else:
+            x_mask = x.clone()
+            mask = torch.rand(x.shape[1]) < permutation_rate
+            x_mask[:,mask] = x[torch.argsort(torch.rand(x.shape[0],mask.sum()),axis=0),mask]
+            #x_mask[:,mask] = x_mask[:,mask] * 0
         
+            input_dict = dict(x=x_mask, batch_index=batch_index)
+        return input_dict
+
+    def freeze_params(self):
+        # freeze
+        for param in self.base_encoder.encoder.parameters():
+            param.requires_grad = False
+        for param in self.gat_mean.parameters():
+            param.requires_grad = False
+        for param in self.gat_var.parameters():
+            param.requires_grad = False
+        for _, mod in self.base_encoder.named_modules():
+            if isinstance(mod, torch.nn.BatchNorm1d):
+                mod.momentum = 0    
+        #for _, mod in self.decoder.named_modules():
+        #    if isinstance(mod, torch.nn.BatchNorm1d):
+        #        mod.momentum = 0
+        #        mod.affine = False
+
+        
+
+
+        
+        
+            
+
     @auto_move_data
     def _generic_inference(
         self,
@@ -173,16 +192,26 @@ class SimVIModule(nn.Module):
         x_ = torch.log(1 + x_)
 
         q_m, q_v, z = self.base_encoder(x_, batch_index)
-        q = self.base_encoder.encoder(x_, batch_index)
-        qgat_m = self.gat_mean(q,edge_index)
-        qgat_v = self.gat_var(q,edge_index)
+        #q = self.base_encoder.encoder(x_, batch_index)
+        
+        #q_m, q_v, z = self.base_encoder2(q, batch_index)
+        qgat_m = self.gat_mean(q_m[:,-self.n_spatial:],edge_index)
+        #qgat_m, qgat_v, z_gat = self.base_encoder2(q, batch_index)
+        qgat_v = self.gat_var(q_m[:,-self.n_spatial:],edge_index)
         qgat_v = torch.exp(qgat_v) + self.var_eps
+        
         dist = Normal(qgat_m, qgat_v.sqrt())
         z_gat = dist.rsample()
         
         z_all = torch.cat((z_gat,z),1)
         qall_m = torch.cat((qgat_m,q_m),1)
 
+        #z_all = z_gat @ torch.diag(self.stg(z_gat)) + z
+        #qall_m = qgat_m @ torch.diag(self.stg(qgat_m)) + q_m
+        #z_all = self.stg(z_gat) + 0.5 * z
+        #qall_m = qgat_m @ torch.diag(self.stg.get_gates()) + 0.5 * q_m
+        #z_all = z_gat + z
+        #qall_m = qgat_m + q_m
         ql_m, ql_v = None, None
         if not self.use_observed_lib_size:
             ql_m, ql_v, library_encoded = self.l_encoder(x_, batch_index)
@@ -227,8 +256,9 @@ class SimVIModule(nn.Module):
         data: Dict[str, torch.Tensor],
         edge_index: torch.Tensor,
         n_samples: int = 1,
+        eval_mode = False,
     ) -> Dict[str, torch.Tensor]:
-        inference_input = self._get_inference_input_from_concat_tensors(data)
+        inference_input = self._get_inference_input_from_concat_tensors(data,eval_mode,self.permutation_rate)
         outputs = self._generic_inference(**inference_input, edge_index = edge_index, n_samples=n_samples)
         return outputs
 
@@ -240,12 +270,14 @@ class SimVIModule(nn.Module):
         library: torch.Tensor,
         batch_index: torch.Tensor,
     ) -> Dict[str, torch.Tensor]:
+        
         px_scale, px_r, px_rate, px_dropout = self.decoder(
-            self.dispersion,
-            z_all,
-            library,
-            batch_index,
-        )
+                self.dispersion,
+                z_all,
+                library,
+                batch_index,
+            )
+
         px_r = torch.exp(self.px_r)
         return dict(
             px_scale=px_scale, px_r=px_r, px_rate=px_rate, px_dropout=px_dropout
@@ -273,6 +305,7 @@ class SimVIModule(nn.Module):
         px_rate: torch.Tensor,
         px_r: torch.Tensor,
         px_dropout: torch.Tensor,
+        dis_to_use: str = 'zinb',
     ) -> torch.Tensor:
         """
         Compute likelihood loss for negative binomial distribution. 
@@ -290,11 +323,18 @@ class SimVIModule(nn.Module):
             of latent samples == 1, the tensor has shape `(batch_size, )`. If number
             of latent samples > 1, the tensor has shape `(n_samples, batch_size)`.
         """
-        recon_loss = (
-            -ZeroInflatedNegativeBinomial(mu=px_rate, theta=px_r, zi_logits=px_dropout)
-            .log_prob(x)
-            .sum(dim=-1)
-        )
+        if dis_to_use == 'zinb':
+            recon_loss = (
+                -ZeroInflatedNegativeBinomial(mu=px_rate, theta=px_r, zi_logits=px_dropout)
+                .log_prob(x)
+                .sum(dim=-1)
+            )
+        else:
+            recon_loss = (
+                -NegativeBinomial(mu=px_rate, theta=px_r)
+                .log_prob(x)
+                .sum(dim=-1)
+            )
         return recon_loss
 
 
@@ -391,8 +431,11 @@ class SimVIModule(nn.Module):
         prior_zgat_m = torch.zeros_like(qgat_m)
         prior_zgat_v = torch.ones_like(qgat_v)
 
-        recon_loss = self.reconstruction_loss(x, px_rate, px_r, px_dropout)
-        mi_loss = self.mi_loss(inference_outputs)
+        recon_loss = self.reconstruction_loss(x, px_rate, px_r, px_dropout,self.dis_to_use)
+        if self.reg_to_use == 'mmd':
+            mi_loss = self.corr_loss(inference_outputs)
+        else:
+            mi_loss = self.mi_loss(inference_outputs)
         kl_z = self.latent_kl_divergence(q_m, q_v, prior_z_m, prior_z_v)
         kl_zgat = self.latent_kl_divergence(qgat_m, qgat_v, prior_zgat_m, prior_zgat_v)
         kl_library = self.library_kl_divergence(batch_index, ql_m, ql_v, library)
@@ -409,35 +452,11 @@ class SimVIModule(nn.Module):
         tensors: Dict[str, torch.Tensor],
         inference_outputs: Dict[str, torch.Tensor],
         generative_outputs: Dict[str, torch.Tensor],
+        weight = 1,
     ) -> LossRecorder:
         """
-        Compute (generator) loss terms for SIMVI. Here we use full-batch training due to the
-        nature of graph-structured data. Also we implement the beta-VAE approach 
-        (larger KL weight than 1) to enforce the distanglement of latent factors
+        Compute (generator) loss terms for SIMVI. 
 
-        Args:
-        ----
-            concat_tensors: Tuple of data mini-batch. The first element contains
-                background data mini-batch. The second element contains target data
-                mini-batch.
-            inference_outputs: Dictionary of inference step outputs. The keys
-                are "background" and "target" for the corresponding outputs.
-            generative_outputs: Dictionary of generative step outputs. The keys
-                are "background" and "target" for the corresponding outputs.
-            kl_weight: Importance weight for KL divergence of background and salient
-                latent variables, relative to KL divergence of library size.
-
-        Returns
-        -------
-            An scvi.module.base.LossRecorder instance that records the following:
-            loss: One-dimensional tensor for overall loss used for optimization.
-            reconstruction_loss: Reconstruction loss with shape
-                `(n_samples, batch_size)` if number of latent samples > 1, or
-                `(batch_size, )` if number of latent samples == 1.
-            kl_local: KL divergence term with shape
-                `(n_samples, batch_size)` if number of latent samples > 1, or
-                `(batch_size, )` if number of latent samples == 1.
-            kl_global: One-dimensional tensor for global KL divergence term.
         """
 
         losses = self._generic_loss(
@@ -456,7 +475,7 @@ class SimVIModule(nn.Module):
 
         weighted_kl_local = self.kl_weight * kl_divergence_z + self.kl_gatweight * kl_divergence_zgat + kl_local_no_warmup
 
-        loss = torch.mean(reconst_loss + weighted_kl_local) + self.lam_mi * mi_loss
+        loss = torch.mean(reconst_loss + weight * weighted_kl_local) + weight * self.lam_mi * mi_loss
 
         kl_local = dict(
             kl_divergence_l=kl_divergence_l,
@@ -477,8 +496,11 @@ class SimVIModule(nn.Module):
         self,
         inference_outputs: Dict[str, torch.Tensor],
     ):
-        psi_x = inference_outputs["z"].detach()
-        psi_y = inference_outputs["z_gat"]
+        """
+        Compute MI loss terms for SIMVI. 
+        """
+        psi_x = inference_outputs["z"]
+        psi_y = inference_outputs["z_gat"].detach()
         
         C_yy = self._cov(psi_y, psi_y)
         C_yx = self._cov(psi_y, psi_x)
@@ -490,6 +512,41 @@ class SimVIModule(nn.Module):
         l2 = -torch.logdet(C_yy-torch.linalg.multi_dot([C_yx,C_xx_inv,C_xy])) + torch.logdet(C_yy)
         return l2
     
+    def corr_loss(
+        self,
+        inference_outputs: Dict[str, torch.Tensor],
+    ):
+        """
+        Compute MMD loss terms for SIMVI. 
+        """
+        z = inference_outputs["z"]
+        s = inference_outputs["z_gat"].detach()
+        sample = torch.cat((z,s),1)
+        true_samples = Variable(torch.randn(sample.shape[0], sample.shape[1],device=z.device),requires_grad=False)
+        l1 = self.compute_mmd(sample,true_samples)
+
+        return l1
+    
+    
+    def compute_mmd(self, x, y):
+        x_kernel = self.compute_kernel(x, x)
+        y_kernel = self.compute_kernel(y, y)
+        xy_kernel = self.compute_kernel(x, y)
+        mmd = x_kernel.mean() + y_kernel.mean() - 2*xy_kernel.mean()
+        return mmd
+    
+    @staticmethod
+    def compute_kernel(x, y):
+        x_size = x.size(0)
+        y_size = y.size(0)
+        dim = x.size(1)
+        x = x.unsqueeze(1) # (x_size, 1, dim)
+        y = y.unsqueeze(0) # (1, y_size, dim)
+        tiled_x = x.expand(x_size, y_size, dim)
+        tiled_y = y.expand(x_size, y_size, dim)
+        kernel_input = (tiled_x - tiled_y).pow(2).mean(2)/float(dim)
+        return torch.exp(-kernel_input) # (x_size, y_size)
+
     
     @staticmethod
     def _cov(psi_x, psi_y):
