@@ -5,7 +5,7 @@ SIMVI (Spatial Interaction Modelling using Variational Inference) is a deep gene
 ![fig1_github](https://github.com/user-attachments/assets/aaa16812-99e7-4f43-ace8-363c2d6dceeb)
 
 Read our updated preprint on BioRxiv:
-https://www.biorxiv.org/content/10.1101/2023.08.28.554970v2
+https://www.biorxiv.org/content/10.1101/2023.08.28.554970v3
 ## System requirements
 ### OS requirements
 The SIMVI package is supported for all OS in principle. The package has been tested on the following systems:
@@ -24,7 +24,7 @@ The installation should take no more than a few minutes on a normal desktop comp
 
 ## Usage
 
-For detailed usage, follow our step-by-step tutorial here:
+For detailed usage, follow our step-by-step tutorial here. The tutorial should take no more than 30 minutes to complete on a standard desktop computer.
 
 - [Getting Started with SIMVI](https://github.com/KlugerLab/SIMVI/blob/main/SIMVI_tutorial_MERFISH.ipynb)
 
