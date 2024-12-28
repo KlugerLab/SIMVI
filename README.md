@@ -10,7 +10,7 @@ https://www.biorxiv.org/content/10.1101/2023.08.28.554970v3
 ### OS requirements
 The SIMVI package is supported for all OS in principle. The package has been tested on the following systems:
 * macOS: Monterey (12.4)
-* Linux: Ubantu (20.04.5)
+* Linux: Ubuntu (20.04.5)
 ### Dependencies
 See `setup.cfg` for details.
 
