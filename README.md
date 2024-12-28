@@ -2,7 +2,7 @@
 
 SIMVI (Spatial Interaction Modelling using Variational Inference) is a deep generative framework for disentangling intrinsic variation and spatially-induced variation in spatial omics data. SIMVI has rigorous identifiability guarantee, and enables novel downstream analyses, including clustering and differential expression analysis based on disentangled representations, spatial effect identification, spatial effect attribution, and transfer learning on new measurements / modalities. SIMVI is implemented with scvi-tools.
 
-![fig1_github](https://github.com/user-attachments/assets/aaa16812-99e7-4f43-ace8-363c2d6dceeb)
+![fig1_github](fig1_github.svg)
 
 Read our updated preprint on BioRxiv:
 https://www.biorxiv.org/content/10.1101/2023.08.28.554970v3
