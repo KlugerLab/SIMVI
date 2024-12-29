@@ -1,3 +1,6 @@
+[![PyPI package](https://img.shields.io/pypi/v/simvi?label=pypi%20package)](https://pypi.org/project/simvi/)
+[![Downloads](https://static.pepy.tech/badge/simvi)](https://pepy.tech/project/simvi)
+
 # SIMVI
 
 SIMVI (Spatial Interaction Modeling using Variational Inference) is a deep generative framework for disentangling intrinsic variation and spatially-induced variation in spatial omics data. SIMVI has rigorous identifiability guarantee, and enables novel downstream analyses, including clustering and differential expression analysis based on disentangled representations, spatial effect identification, spatial effect attribution, and transfer learning on new measurements / modalities. SIMVI is implemented with scvi-tools.
