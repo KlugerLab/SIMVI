@@ -1,4 +1,4 @@
-"""Model class for SIMVI for single cell expression data."""
+"""Model class for SIMVI for disentangling intrinsic and spatial-induced variations in spatial omics data."""
 
 import logging
 import warnings
@@ -62,25 +62,43 @@ Number = Union[int, float]
 
 class SimVIModel(BaseModelClass):
     """
-    Model class for SIMVI.
-    Args:
-    ----
-        adata: AnnData object that has been registered via
-            `SimVIModel.setup_anndata`.
-        n_batch: Number of batches. 
-        n_hidden: Number of nodes per hidden layer.
-        n_intrinsic: Dimensionality of the intrinsic variation.
-        n_spatial: Dimensionality of the spatial variation.
-        n_layers: Number of decoder layers. Note that in our implementation, encoder is fixed to have two layers.
-        lam_mi: Coefficient of the independence regularization term. When using the mmd option, a coefficient of 1000 is recommended. When using the mi option, the value of 5 is recommended.
-        reg_to_use: 'mmd' (Maximal Mean Discrepancy) or 'mi' (Closed-form mutual information).
-        use_observed_lib_size: Use observed library size for RNA as scaling factor in
-            mean of conditional distribution.
-        permutation rate: the rate of permutation to use in the training. (The permutation step itself is optional)
-        var_eps: minimal variance for the variational posteriors.
-        kl_weight: The kl divergence coefficient for intrinsic variation.
-        kl_gatweight: The kl divergence coefficient for spatial variation.
-        attention_heads: the number of attention heads.
+        Calculate the intrinsic variation and spatial variation of single-cell expression data via variation inference.
+
+        Parameters
+        ----------
+        adata : AnnData
+                AnnData object that has been registered via `SimVIModel.setup_anndata`.
+        n_batch : int, default: 0
+                Number of batches.
+        n_hidden : int, default: 128
+                Number of nodes per hidden layer.
+        n_intrinsic : int, default: 20
+                Dimensionality of the intrinsic variation.
+        n_spatial : int, default: 20 
+                Dimensionality of the spatial variation.
+        n_layers : int, default: 1
+                Number of decoder layers. Note that in our implementation, encoder is fixed to have two layers.
+        dropout_rate : float, default: 0
+                Dropout rate for neural networks.
+        use_observed_lib_size : bool, default: True
+                Use observed library size for RNA as scaling factor in mean of conditional distribution.
+        lam_mi : float, default: 1000
+                Coefficient of the independence regularization term. When using the mmd option, 
+                a coefficient of 1000 is recommended. When using the mi option, the value of 5 is recommended.
+        reg_to_use : str, default: 'mmd'
+                The regularization method to use. Either 'mmd' (Maximal Mean Discrepancy) or 'mi' (Closed-form mutual information).
+        dis_to_use : str, default: 'zinb'
+                The distribution to use for the generative model.
+        permutation_rate : float, default: 0.25
+                The rate of permutation to use in the training. The permutation step itself is optional.
+        var_eps : float, default: 1e-4
+                Minimal variance for the variational posteriors.
+        kl_weight : float, default: 1
+                The KL divergence coefficient for intrinsic variation.
+        kl_gatweight : float, default: 0.01
+                The KL divergence coefficient for spatial variation.
+        attention_heads : int, default: 1
+                The number of attention heads.
     """
 
     def __init__(
@@ -146,6 +164,10 @@ class SimVIModel(BaseModelClass):
         self.init_params_ = self._get_init_params(locals())
         logger.info("The model has been initialized")
 
+    #--------------------------------------------------
+    # Preprocessing: setup_anndata, extract_edge_index
+    #--------------------------------------------------
+
     @classmethod
     @setup_anndata_dsp.dedent
     def setup_anndata(
@@ -162,25 +184,26 @@ class SimVIModel(BaseModelClass):
         """
         Set up AnnData instance for SIMVI model. A standard function to call in scvi-tools pipeline.
 
-        Args:
-        ----
-            adata: AnnData object containing raw counts. Rows represent cells, columns
-                represent features.
-            layer: If not None, uses this as the key in adata.layers for raw count data.
-            batch_key: Key in `adata.obs` for batch information. Categories will
-                automatically be converted into integer categories and saved to
-                `adata.obs["_scvi_batch"]`. If None, assign the same batch to all the
-                data.
-            labels_key: Key in `adata.obs` for label information. Categories will
-                automatically be converted into integer categories and saved to
-                `adata.obs["_scvi_labels"]`. If None, assign the same label to all the
-                data.
-            size_factor_key: Key in `adata.obs` for size factor information. 
-            categorical_covariate_keys: Keys in `adata.obs` corresponding to categorical
-                data. Not used in SIMVI.
-            continuous_covariate_keys: Keys in `adata.obs` corresponding to continuous
-                data. Not used in SIMVI.
-
+        Parameters
+        ----------
+        adata : AnnData
+                AnnData object containing raw counts. Rows represent cells, columns represent features.
+        layer : str, optional
+                If not None, uses this as the key in adata.layers for raw count data.
+        batch_key : str, optional
+                Key in `adata.obs` for batch information. Categories will automatically be converted 
+                into integer categories and saved to `adata.obs["_scvi_batch"]`. If None, assign 
+                the same batch to all the data.
+        labels_key : str, optional
+                Key in `adata.obs` for label information. Categories will automatically be converted
+                into integer categories and saved to `adata.obs["_scvi_labels"]`. If None, assign
+                the same label to all the data.
+        size_factor_key : str, optional
+                Key in `adata.obs` for size factor information. 
+        categorical_covariate_keys : List[str], optional
+                Keys in `adata.obs` corresponding to categorical data. Not used in SIMVI.
+        continuous_covariate_keys : List[str], optional
+                Keys in `adata.obs` corresponding to continuous data. Not used in SIMVI.
         """
         setup_method_args = cls._get_setup_method_args(**locals())
         anndata_fields = [
@@ -208,27 +231,33 @@ class SimVIModel(BaseModelClass):
         batch_key: Optional[str] = None,
         spatial_key: Optional[str] = 'spatial',
         method: str = 'knn',
-        n_neighbors: int = 30,
+        n_neighbors: int = 10,
         ):
         """
         Define edge_index for SIMVI model training.
 
-        Args:
-        ----
-            adata: AnnData object.
-            batch_key: Key in `adata.obs` for batch information. If batch_key is none,
-            assume the adata is from the same batch. Otherwise, we create edge_index
-            based on each batch and concatenate them.
-            spatial_key: Key in `adata.obsm` for spatial location.
-            method: method for establishing the graph proximity relationship between
-            cells. Two available methods are: knn and Delouney. Knn is used as default
-            due to its flexible neighbor number selection.
-            n_neighbors: The number of n_neighbors of knn graph. Not used if the graph
-            is based on Delouney triangularization.
+        Parameters
+        ----------
+        adata : AnnData
+                AnnData object.
+        batch_key : str, optional
+                Key in `adata.obs` for batch information. If batch_key is none,
+                assume the adata is from the same batch. Otherwise, we create edge_index
+                based on each batch and concatenate them.
+        spatial_key : str, optional, default: 'spatial'
+                Key in `adata.obsm` for spatial location.
+        method : str, default: 'knn'
+                Method for establishing the graph proximity relationship between
+                cells. Two available methods are: knn and Delouney. Knn is used as default
+                due to its flexible neighbor number selection.
+        n_neighbors : int, default: 10
+                The number of n_neighbors of knn graph. Not used if the graph
+                is based on Delouney triangularization.
 
         Returns
         -------
-            edge_index: torch.Tensor.
+        edge_index : torch.Tensor
+                The edge index tensor containing the graph structure.
         """
         if batch_key is not None:
             j = 0
@@ -277,6 +306,9 @@ class SimVIModel(BaseModelClass):
 
         return edge_index
 
+    #--------------------------------------------------------------------------------------------
+    # Post-Training / Inference: get_latent_representation, get_attention, get_archetypes, get_se
+    #--------------------------------------------------------------------------------------------
 
     @torch.no_grad()
     def get_latent_representation(
@@ -291,19 +323,25 @@ class SimVIModel(BaseModelClass):
         """
         Return the latent representation for each cell.
 
-        Args:
-        ----
-        adata: AnnData object with equivalent structure to initial AnnData. If `None`,
-            defaults to the AnnData object used to initialize the model.
-        indices: Indices of cells in adata to use. If `None`, all cells are used.
-        give_mean: Give mean of distribution or sample from it.
-        batch_size: Mini-batch size for data loading into model. Defaults to full batch training.
-        representation_kind: "intrinsic", "interaction" or "all" for the corresponding
-            representation kind.
+        Parameters
+        ----------
+        adata : AnnData, optional
+                AnnData object with equivalent structure to initial AnnData. If `None`,
+                defaults to the AnnData object used to initialize the model.
+        indices : Sequence[int], optional
+                Indices of cells in adata to use. If `None`, all cells are used.
+        give_mean : bool, default: True
+                Give mean of distribution or sample from it.
+        batch_size : int, optional
+                Mini-batch size for data loading into model. Defaults to full batch training.
+        representation_kind : str, default: "all"
+                "intrinsic", "interaction" or "all" for the corresponding
+                representation kind.
 
         Returns
         -------
-            A numpy array with shape `(n_cells, n_latent)`.
+        np.ndarray
+                A numpy array with shape `(n_cells, n_latent)`.
         """
         available_representation_kinds = ["intrinsic", "interaction","output","all"]
         assert representation_kind in available_representation_kinds, (
@@ -343,6 +381,22 @@ class SimVIModel(BaseModelClass):
         self,
         edge_index,
     ) -> np.ndarray:
+        """
+        Return the attention matrix for graph attention network.
+
+        Parameters
+        ----------
+        edge_index : torch.Tensor
+                Edge index tensor containing the graph structure, created by 
+                `extract_edge_index` function.
+
+        Returns
+        -------
+        scipy.sparse.csr_matrix
+                A sparse matrix containing the attention weights between cells, 
+                with shape `(n_cells, n_cells)`.
+        """
+
         data = AnnTorchDataset(self.adata_manager)
         data = data[np.arange(data.get_data('X').shape[0])]
         for key, value in data.items():
@@ -380,6 +434,32 @@ class SimVIModel(BaseModelClass):
         maxiter=200,
         verbose=False,
     ) -> np.ndarray:
+        """
+        Calculate archetypal analysis for the input latent representation. A preliminary step for `get_se` function.
+
+        Parameters
+        ----------
+        embedding : np.ndarray
+               Input data matrix where each row represents a cell.
+        noc : int, default: 5
+                Number of archetypes to extract.
+        delta : float, default: 0.1
+                The relaxation parameter in PCHA algorithm.
+        conv_crit : float, default: 0.00001
+                Convergence criterion. Algorithm stops when the relative change in objective function is less than this.
+        maxiter : int, default: 200
+                Maximum number of iterations.
+        verbose : bool, default: False
+                Whether to print progress during optimization.
+ 
+        Returns
+        -------
+        Tuple
+                Returns a tuple containing:
+                - Feature loading matrix (shape: (n_archetypes, latent_dim))
+                - Archetypal representation matrix (shape: (n_cells, n_archetypes))
+                - Explained variance ratio
+        """
 
         from py_pcha import PCHA
         XC, S, C, SSE, varexpl = PCHA(embedding.T, noc=noc, delta=delta,conv_crit=conv_crit, maxiter=maxiter, verbose=verbose)
@@ -407,27 +487,51 @@ class SimVIModel(BaseModelClass):
         mode = 'individual',
     ) -> np.ndarray:
         """
-        Return the spatial effect for each cell in spatial omics data. Requires training the SIMVI model in priori.
+        Return the spatial effect for each cell in spatial omics data. Requires training the SIMVI model in priori.  
 
-        Args:
-        ----
-        edge_index: The object created by function "extract_edge_index".
-        adata: AnnData object with equivalent structure to initial AnnData. If `None`,
-            defaults to the AnnData object used to initialize the model.
-        z_label: the name of the intrinsic variation in adata.obsm. If adata is `None`, then it is calculated in this function.
-        s_label: the name of the spatial variation in adata.obsm. If adata is `None`, then it is calculated in this function.
-        transformation: If `log1p`, perform log1p on a copy of the data. Else, operate on the given adata.X.
-        batch_label: If given, then add it as a covariate in the double machine learning model.
-        num_arch, delta, maxiter, Kfold, eps: parameters of archetypal transformation.
-        thres: Thres2 in positivity index calculation.
-        positivity_filter: If True, only return the spatial effect of cells satisfying positivity condition, and return the indices of these celles.
-        cell_type_label: If given, then add it as a covariate in the double machine learning model.
-        obsm_label: If given, then add it as a covariate in the double machine learning model.
+        Parameters
+        ----------
+        edge_index : torch.Tensor
+                The object created by function "extract_edge_index".
+        adata : AnnData, optional
+                AnnData object with equivalent structure to initial AnnData. If `None`,
+                defaults to the AnnData object used to initialize the model.
+        z_label : str, optional
+                The name of the intrinsic variation in adata.obsm. If adata is `None`, 
+                then it is calculated in this function.
+        s_label : str, optional
+                The name of the spatial variation in adata.obsm. If adata is `None`, 
+                then it is calculated in this function.
+        transformation : str, default: 'log1p'
+                If `log1p`, perform log1p on a copy of the data. Else, operate on the given adata.X.
+        batch_label : str, optional
+                If given, then add it as a covariate in the double machine learning model.
+        num_arch : int, default: 5
+                Number of archetypes in archetypal transformation.
+        delta : float, default: 0.1
+                Delta parameter in archetypal transformation.
+        maxiter : int, default: 200
+                Maximum iterations in archetypal transformation.
+        Kfold : int, default: 5
+                Number of folds in cross validation.
+        eps : float, default: 0
+                Epsilon parameter in archetypal transformation.
+        thres : float, default: 0.95
+                Thres2 in positivity index calculation.
+        positivity_filter : bool, default: False
+                If True, only return the spatial effect of cells satisfying positivity condition,
+                and return the indices of these cells.
+        cell_type_label : str, optional
+                If given, then add it as a covariate in the double machine learning model.
+        obsm_label : str, optional
+                If given, then add it as a covariate in the double machine learning model. 
+
         Returns
         -------
-            If positivity is `False`, return spatial effect, R2s, p-values, and archetypes. Else, additionally return indices satisfying the positivity condition. 
+        Union[tuple, tuple]
+                If positivity is `False`, return (spatial_effect, R2s, p_values, archetypes).
+                If positivity is `True`, return (positive_indices, spatial_effect, R2s, p_values, archetypes). 
         """
-        ## If adata is not provided, infer the latent space first. Else, use the existing variations
         
         if adata is None:
             data = AnnTorchDataset(self.adata_manager)
@@ -561,7 +665,9 @@ class SimVIModel(BaseModelClass):
             else:
                 return se, r2_z/Kfold, r2_s/Kfold, return_f_pv(adata_tmp.X[ind],r2_z/Kfold), return_f_pv(adata_tmp.X[ind],r2_s/Kfold), S
                 
-
+    #------------------------
+    # Main Training Function
+    #------------------------
 
     def train(
         self,
@@ -578,31 +684,41 @@ class SimVIModel(BaseModelClass):
         device = None,
     ) -> None:
         """
-        Train the SIMVI model. In our setting, we consider full-batch training, therefore
-        we rewrite the training function. 
-
-        Args:
-        ----
-            edge_index: tensor returned by model.extract_edge_index.
-            max_epochs: Number of passes through the dataset. If `None`, default to
+        Train the SIMVI model. We adopt the "semi-supervised" framework for model training.
+ 
+        Parameters
+        ----------
+        edge_index : torch.Tensor
+                Tensor returned by model.extract_edge_index.
+        max_epochs : int, optional
+                Number of passes through the dataset. If `None`, default to
                 `np.min([round((20000 / n_cells) * 400), 400])`.
-            use_gpu: Use default GPU if available (if `None` or `True`), or index of
+        use_gpu : Union[str, int, bool], optional
+                Use default GPU if available (if `None` or `True`), or index of
                 GPU to use (if `int`), or name of GPU (if `str`, e.g., `"cuda:0"`),
                 or use CPU (if `False`).
-            train_size: Size of training set in the range [0.0, 1.0].
-            batch_size: Mini-batch size to use during training.
-            anneal_epochs: The number of epoches that use KL annealing.
-            mae_epochs: The number of epoches that corrupts input data.
-            validation_size: Size of the validation set. If `None`, default to
-                `1 - train_size`. If `train_size + validation_size < 1`, the remaining
-                cells belong to the test set.
-            lr: learning rate. Default 1e-3.
-            weight_decay: weight decay (serve as l2 regularization). Default 1e-4.
-            device: The GPU to train the model on. If none, use torch.device("cuda") or cpu.
-
+        train_size : float, default: 0.9
+                Size of training set in the range [0.0, 1.0].
+        batch_size : int, optional
+                Mini-batch size to use during training.
+        anneal_epochs : int, default: 50
+                The number of epochs that use KL annealing.
+        mae_epochs : int, default: 80
+                The number of epochs that corrupts input data.
+        validation_size : float, optional
+                Size of the validation set. If `None`, default to `1 - train_size`. 
+                If `train_size + validation_size < 1`, the remaining cells belong to the test set.
+        lr : float, default: 1e-3
+                Learning rate.
+        weight_decay : float, default: 1e-4
+                Weight decay (serves as L2 regularization).
+        device : str, optional
+                The GPU to train the model on. If none, use torch.device("cuda") or cpu.
+ 
         Returns
         -------
-            None. The model is trained.
+        None
+                The model is trained.
         """
         if max_epochs is None:
             n_cells = self.adata_manager.adata.n_obs
@@ -677,7 +793,14 @@ class SimVIModel(BaseModelClass):
 
         return train_loss, val_loss
 
+#--------------------------------------------
+# Helper Methods: _train, _eval, return_f_pv
+#--------------------------------------------
+
 def _train(model, data, edge_index, mask, train_loader, optimizer, batch_size, weight, eval_mode):
+    """
+    Helper function for training. Has full-batch and mini-batch modes.
+    """
     train_loss = []
     model.train()
     #print(latent_dict)
@@ -722,6 +845,9 @@ def _train(model, data, edge_index, mask, train_loader, optimizer, batch_size, w
     return np.array(train_loss).mean()
 
 def _eval(model, data, edge_index, mask,val_loader, weight):
+    """
+    Helper function for evaluation. Has full-batch and mini-batch modes.
+    """
     model.eval()
     latent_dict = model.inference(data,edge_index,eval_mode=True)
     #print(latent_dict)
@@ -735,30 +861,11 @@ def _eval(model, data, edge_index, mask,val_loader, weight):
     decoder_dict = model.generative(latent_dict_masked)
     lossrecorder = model.loss(val_loader, latent_dict_masked, decoder_dict, weight)
     return lossrecorder.loss.detach().cpu()
-    
-def _prob(loc,scale,value):
-    ### diagonal covariance, therefore the density can be decomposed
-    var = (scale * scale)
-    log_scale = torch.log(scale)
-    log_prob = -((value[None,:] - loc) * (value[None,:] - loc)) / (2 * var) - log_scale - torch.log(torch.tensor(math.sqrt(2 * math.pi)))
-    return torch.exp(log_prob.sum(1))
-
-def get_f_pv(X,y,lr):
-    N = X.shape[0]
-    K = X.shape[1] + 1
-    Rsq = r2_score(y,lr.predict(X), multioutput='raw_values')
-    fstat = (Rsq/(1-Rsq))*((N-K-1)/K)
-
-    df_model = X.shape[1]
-    df_residuals = X.shape[0] - X.shape[1] + 1
-
-    p_values = f.sf(fstat, df_model, df_residuals)
-    
-    rej, adj_p = fdrcorrection(p_values)
-    
-    return adj_p
 
 def return_f_pv(X,Rsq):
+    """
+    Helper function for calculating p values of spatial effects.
+    """
     N = X.shape[0]
     K = X.shape[1] + 1
     fstat = (Rsq/(1-Rsq))*((N-K-1)/K)
