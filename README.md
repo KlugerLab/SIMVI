@@ -1,4 +1,5 @@
 [![PyPI package](https://img.shields.io/pypi/v/simvi?label=pypi%20package)](https://pypi.org/project/simvi/)
+[![Read the Docs](https://img.shields.io/readthedocs/idsc-suite/latest.svg?label=Read%20the%20Docs)](https://idsc-suite.readthedocs.io/)
 [![Downloads](https://static.pepy.tech/badge/simvi)](https://pepy.tech/project/simvi)
 
 # SIMVI
@@ -24,6 +25,9 @@ SIMVI requires `python` version 3.7+.  Install directly from pip with:
 
 The installation should take no more than a few minutes on a normal desktop computer.
 
+## Documentation
+
+Please read the [documentation](https://idsc-suite.readthedocs.io/en/latest).
 
 ## Usage
 
