@@ -27,7 +27,7 @@ The installation should take no more than a few minutes on a normal desktop comp
 
 ## Documentation
 
-Please read the [documentation](https://idsc-suite.readthedocs.io/en/latest).
+Please refer to our documentation [here](https://idsc-suite.readthedocs.io/en/latest).
 
 ## Usage
 
