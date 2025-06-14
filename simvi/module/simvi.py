@@ -36,6 +36,7 @@ class SimVIModule(nn.Module):
         dropout_rate: float = 0.1,
         reg_to_use: str = 'mmd',
         dis_to_use: str = 'zinb',
+        noising_mode: str = 'default',
         permutation_rate: float = 0.5,
         use_observed_lib_size: bool = True,
         library_log_means: Optional[np.ndarray] = None,
@@ -55,6 +56,7 @@ class SimVIModule(nn.Module):
         self.n_layers = n_layers
         self.dropout_rate = dropout_rate
         self.reg_to_use = reg_to_use
+        self.noising_mode = noising_mode
         self.permutation_rate = permutation_rate
         self.latent_distribution = "normal"
         self.dispersion = "gene"
@@ -140,7 +142,7 @@ class SimVIModule(nn.Module):
 
     @staticmethod
     def _get_inference_input_from_concat_tensors(
-        tensors: Dict[str, torch.Tensor], eval_mode = False, permutation_rate = 0.5,
+        tensors: Dict[str, torch.Tensor], eval_mode = False, permutation_rate = 0.5, noising_mode = 'default',
     ) -> Dict[str, torch.Tensor]:
         x = tensors[REGISTRY_KEYS.X_KEY]
         batch_index = tensors[REGISTRY_KEYS.BATCH_KEY]
@@ -149,8 +151,14 @@ class SimVIModule(nn.Module):
         else:
             x_mask = x.clone()
             mask = torch.rand(x.shape[1]) < permutation_rate
-            x_mask[:,mask] = x[torch.argsort(torch.rand(x.shape[0],mask.sum()),axis=0),mask]
-            #x_mask[:,mask] = x_mask[:,mask] * 0
+            if noising_mode == 'default':  ## original SIMVI design, sampling without replacement
+                x_mask[:,mask] = x[torch.argsort(torch.rand(x.shape[0],mask.sum()),axis=0),mask]
+            elif noising_mode == 'zero': ## zero-masking
+                x_mask[:,mask] = x_mask[:,mask] * 0
+            else: ## sampling with replacement, faster than the original design
+                random_cell_idx = torch.randint(0, x.shape[0], (mask.sum(),), device=x.device)
+                masked_gene_idx = torch.where(mask)[0]
+                x_mask[:, mask] = x[random_cell_idx, masked_gene_idx]
         
             input_dict = dict(x=x_mask, batch_index=batch_index)
         return input_dict
@@ -258,7 +266,7 @@ class SimVIModule(nn.Module):
         n_samples: int = 1,
         eval_mode = False,
     ) -> Dict[str, torch.Tensor]:
-        inference_input = self._get_inference_input_from_concat_tensors(data,eval_mode,self.permutation_rate)
+        inference_input = self._get_inference_input_from_concat_tensors(data,eval_mode,self.permutation_rate,self.noising_mode)
         outputs = self._generic_inference(**inference_input, edge_index = edge_index, n_samples=n_samples)
         return outputs
 
