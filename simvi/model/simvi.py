@@ -89,6 +89,9 @@ class SimVIModel(BaseModelClass):
                 The regularization method to use. Either 'mmd' (Maximal Mean Discrepancy) or 'mi' (Closed-form mutual information).
         dis_to_use : str, default: 'zinb'
                 The distribution to use for the generative model.
+        noising_mode : str, default: 'default'
+                The noising scheme in the denoising autoencoding phase. 'default', original permutation procedure used in SIMVI manuscript.
+                'zero', zero masking. 'sampling', a faster version of the permutation by allowing replacement.
         permutation_rate : float, default: 0.25
                 The rate of permutation to use in the training. The permutation step itself is optional.
         var_eps : float, default: 1e-4
@@ -114,6 +117,7 @@ class SimVIModel(BaseModelClass):
         lam_mi: float = 1000,
         reg_to_use: str = 'mmd',
         dis_to_use: str = 'zinb',
+        noising_mode: str ='default',
         permutation_rate: float = 0.25,
         var_eps: float = 1e-4,
         kl_weight: float = 1,
@@ -153,6 +157,7 @@ class SimVIModel(BaseModelClass):
             lam_mi = lam_mi,
             reg_to_use = reg_to_use,
             dis_to_use = dis_to_use,
+            noising_mode = noising_mode,
             permutation_rate = permutation_rate,
             var_eps = var_eps,
             kl_weight = kl_weight,
@@ -735,7 +740,7 @@ class SimVIModel(BaseModelClass):
         val_mask = permutation[n_train : (n_val + n_train)]
         test_mask = permutation[(n_val + n_train) :]
         if device is None:
-            if use_gpu & torch.cuda.is_available():
+            if use_gpu and torch.cuda.is_available():
                 device = torch.device("cuda")
             else:
                 device = 'cpu'
@@ -764,6 +769,18 @@ class SimVIModel(BaseModelClass):
                         data_masked[key] = value[batch_index]
 
                 train_loader[i] = data_masked
+                
+            batch_indices = [val_mask[i:i + batch_size] for i in range(0, val_mask.shape[0], batch_size)]
+            val_loader = {}
+            for i, batch_index in enumerate(batch_indices):
+                data_masked = {}
+                for key, value in data.items():
+                    if value is None:
+                        data_masked[key] = None
+                    else:
+                        data_masked[key] = value[batch_index]
+
+                val_loader[i] = data_masked
         else:
             data_masked = {}
             for key, value in data.items():
@@ -773,12 +790,12 @@ class SimVIModel(BaseModelClass):
                     data_masked[key] = value[train_mask]
             train_loader = data_masked
             
-        val_loader = {}
-        for key, value in data.items():
-            if value is None:
-                val_loader[key] = None
-            else:
-                val_loader[key] = value[val_mask]
+            val_loader = {}
+            for key, value in data.items():
+                if value is None:
+                    val_loader[key] = None
+                else:
+                    val_loader[key] = value[val_mask]
 
         for epoch in pbar:
             weight = min(1.0, epoch / anneal_epochs)
@@ -787,9 +804,9 @@ class SimVIModel(BaseModelClass):
             else:
                 eval_mode = True
             train_loss.append(_train(self.module, data, edge_index, train_mask, train_loader, optimizer, batch_size, weight, eval_mode))
-            val_loss.append(_eval(self.module, data, edge_index, val_mask,val_loader, weight))
+            val_loss.append(_eval(self.module, data, edge_index, val_mask, val_loader, batch_size, weight))
             pbar.set_description('Epoch '+str(epoch)+'/'+str(max_epochs))
-            pbar.set_postfix(train_loss=train_loss[epoch-1], val_loss=val_loss[epoch-1].numpy())
+            pbar.set_postfix(train_loss=train_loss[epoch-1], val_loss=val_loss[epoch-1])
 
         return train_loss, val_loss
 
@@ -828,7 +845,6 @@ def _train(model, data, edge_index, mask, train_loader, optimizer, batch_size, w
             optimizer.zero_grad()
             latent_dict = model.inference(data,edge_index,eval_mode=eval_mode)
             latent_dict_masked = {}
-            data_masked = {}
             for key, value in latent_dict.items():
                 if value is None:
                     latent_dict_masked[key] = None
@@ -844,23 +860,39 @@ def _train(model, data, edge_index, mask, train_loader, optimizer, batch_size, w
             train_loss.append(loss.detach().cpu())
     return np.array(train_loss).mean()
 
-def _eval(model, data, edge_index, mask,val_loader, weight):
-    """
-    Helper function for evaluation. Has full-batch and mini-batch modes.
-    """
+@torch.no_grad()
+def _eval(model, data, edge_index, mask,val_loader, batch_size, weight):
+    val_loss = []
     model.eval()
-    latent_dict = model.inference(data,edge_index,eval_mode=True)
-    #print(latent_dict)
-    latent_dict_masked = {}
-    for key, value in latent_dict.items():
-        if value is None:
-            latent_dict_masked[key] = None
-        else:
-            latent_dict_masked[key] = value[mask]
+    if batch_size is None:
+        latent_dict = model.inference(data,edge_index,eval_mode=True)
+        #print(latent_dict)
+        latent_dict_masked = {}
+        for key, value in latent_dict.items():
+            if value is None:
+                latent_dict_masked[key] = None
+            else:
+                latent_dict_masked[key] = value[mask]
             
-    decoder_dict = model.generative(latent_dict_masked)
-    lossrecorder = model.loss(val_loader, latent_dict_masked, decoder_dict, weight)
-    return lossrecorder.loss.detach().cpu()
+        decoder_dict = model.generative(latent_dict_masked)
+        lossrecorder = model.loss(val_loader, latent_dict_masked, decoder_dict, weight)
+        val_loss.append(lossrecorder.loss.detach().cpu())
+    else:
+        batch_indices = [mask[i:i + batch_size] for i in range(0, mask.shape[0], batch_size)]
+        
+        for i, batch_index in enumerate(batch_indices):
+            latent_dict = model.inference(data,edge_index,eval_mode=True)
+            latent_dict_masked = {}
+            for key, value in latent_dict.items():
+                if value is None:
+                    latent_dict_masked[key] = None
+                else:
+                    latent_dict_masked[key] = value[batch_index]
+
+            decoder_dict = model.generative(latent_dict_masked)
+            lossrecorder = model.loss(val_loader[i], latent_dict_masked, decoder_dict, weight)
+            val_loss.append(lossrecorder.loss.detach().cpu())
+    return np.array(val_loss).mean()
 
 def return_f_pv(X,Rsq):
     """
