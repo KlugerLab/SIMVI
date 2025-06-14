@@ -8,8 +8,22 @@ SIMVI (Spatial Interaction Modeling using Variational Inference) is a deep gener
 
 ![fig1_github](fig1_github.svg)
 
-Read our updated preprint on BioRxiv:
-https://www.biorxiv.org/content/10.1101/2023.08.28.554970v3
+Read the SIMVI paper on Nature Communications:
+https://www.nature.com/articles/s41467-025-58089-7
+
+Citation:
+```
+@article{dong2025simvi,
+  title={SIMVI disentangles intrinsic and spatial-induced cellular states in spatial omics data},
+  author={Dong, Mingze and Su, David G and Kluger, Harriet and Fan, Rong and Kluger, Yuval},
+  journal={Nature Communications},
+  volume={16},
+  number={1},
+  pages={2990},
+  year={2025},
+  publisher={Nature Publishing Group UK London}
+}
+```
 ## System requirements
 ### OS requirements
 The SIMVI package is supported for all OS in principle. The package has been tested on the following systems:
