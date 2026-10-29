@@ -150,13 +150,13 @@ class SimVIModule(nn.Module):
             input_dict = dict(x=x, batch_index=batch_index)
         else:
             x_mask = x.clone()
-            mask = torch.rand(x.shape[1]) < permutation_rate
+            mask = torch.rand(x.shape[1], device=x.device) < permutation_rate
             if noising_mode == 'default':  ## original SIMVI design, sampling without replacement
-                x_mask[:,mask] = x[torch.argsort(torch.rand(x.shape[0],mask.sum()),axis=0),mask]
+                x_mask[:,mask] = x[torch.argsort(torch.rand(x.shape[0],int(mask.sum()),device=x.device),axis=0),mask]
             elif noising_mode == 'zero': ## zero-masking
                 x_mask[:,mask] = x_mask[:,mask] * 0
             else: ## sampling with replacement, faster than the original design
-                random_cell_idx = torch.randint(0, x.shape[0], (mask.sum(),), device=x.device)
+                random_cell_idx = torch.randint(0, x.shape[0], (int(mask.sum()),), device=x.device)
                 masked_gene_idx = torch.where(mask)[0]
                 x_mask[:, mask] = x[random_cell_idx, masked_gene_idx]
         
