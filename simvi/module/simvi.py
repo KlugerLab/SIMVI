@@ -8,8 +8,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from scvi import REGISTRY_KEYS
 from scvi.distributions import ZeroInflatedNegativeBinomial, NegativeBinomial
-from scvi.module.base import BaseModuleClass, LossRecorder, auto_move_data
-from scvi.nn import DecoderSCVI, Encoder, one_hot
+from scvi.module.base import LossOutput, auto_move_data
+from scvi.nn import DecoderSCVI, Encoder
 from torch.distributions import Normal
 from torch.distributions import kl_divergence as kl
 from torch.autograd import Variable
@@ -418,8 +418,8 @@ class SimVIModule(nn.Module):
         inference_outputs: Dict[str, torch.Tensor],
         generative_outputs: Dict[str, torch.Tensor],
     ) -> Dict[str, torch.Tensor]:
-        x = torch.Tensor(tensors[REGISTRY_KEYS.X_KEY])
-        batch_index = torch.Tensor(tensors[REGISTRY_KEYS.BATCH_KEY])
+        x = tensors[REGISTRY_KEYS.X_KEY]
+        batch_index = tensors[REGISTRY_KEYS.BATCH_KEY]
 
 
 
@@ -461,7 +461,7 @@ class SimVIModule(nn.Module):
         inference_outputs: Dict[str, torch.Tensor],
         generative_outputs: Dict[str, torch.Tensor],
         weight = 1,
-    ) -> LossRecorder:
+    ) -> LossOutput:
         """
         Compute (generator) loss terms for SIMVI. 
 
@@ -491,13 +491,11 @@ class SimVIModule(nn.Module):
             kl_divergence_zgat=kl_divergence_zgat
         )
 
-        # LossRecorder internally sums the `reconst_loss`, `kl_local`, and `kl_global`
-        # terms before logging, so we do the same for our `wasserstein_loss` term.
-        return LossRecorder(
-            loss,
-            reconst_loss,
-            self.lam_mi * mi_loss,
-            kl_local
+        return LossOutput(
+            loss=loss,
+            reconstruction_loss=reconst_loss,
+            kl_local=kl_local,
+            extra_metrics={"mi_loss": self.lam_mi * mi_loss},
         )
         
     def mi_loss(
