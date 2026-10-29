@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "simvi"
 version = "0.1.2+scvi15"
-description = "Spatial Interaction Modeling using Variational Inference, ported to scvi-tools 1.5"
+description = "Spatial Interaction Modeling using Variational Inference"
 readme = "README.md"
 license = "BSD-3-Clause"
 authors = [{ name = "Mingze Dong", email = "mingze.dong@yale.edu" }]
