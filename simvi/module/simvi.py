@@ -163,6 +163,9 @@ class SimVIModule(nn.Module):
             input_dict = dict(x=x_mask, batch_index=batch_index)
         return input_dict
 
+    def on_load(self, model, **kwargs):
+        """Callback run in scvi-tools' `BaseModelClass.load`; nothing to restore."""
+
     def freeze_params(self):
         # freeze
         for param in self.base_encoder.encoder.parameters():
