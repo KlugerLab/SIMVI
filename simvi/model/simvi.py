@@ -825,7 +825,7 @@ def _train(model, data, edge_index, mask, train_loader, optimizer, batch_size, w
         loss.backward()
         #clip_grad_value_(model.parameters(), clip_value=1)
         optimizer.step()
-        train_loss.append(loss.detach())
+        train_loss.append(loss.detach().cpu())
     else:
         batch_indices = [mask[i:i + batch_size] for i in range(0, mask.shape[0], batch_size)]
         
