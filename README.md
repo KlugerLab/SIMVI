@@ -30,12 +30,13 @@ The SIMVI package is supported for all OS in principle. The package has been tes
 * macOS: Monterey (12.4)
 * Linux: Ubuntu (20.04.5)
 ### Dependencies
-See `setup.cfg` for details.
+See `pyproject.toml` for details.
 
 ## Installation
-SIMVI requires `python` version 3.7+.  Install directly from pip with:
+SIMVI requires `python` version 3.11+ and scvi-tools 1.5+. The release on PyPI (0.1.2) predates this and requires
+scvi-tools<=0.16.2; until a new release, install from GitHub with:
 
-    pip install simvi
+    pip install git+https://github.com/KlugerLab/SIMVI
 
 The installation should take no more than a few minutes on a normal desktop computer.
 

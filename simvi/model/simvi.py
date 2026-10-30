@@ -13,7 +13,6 @@ import scanpy as sc
 from sklearn.neighbors import kneighbors_graph
 from torch_geometric.utils import from_scipy_sparse_matrix
 from scipy.spatial import Delaunay
-import pytorch_lightning as pl
 import torch.optim as optim
 from scvi import settings
 from tqdm import tqdm
@@ -38,20 +37,11 @@ from scvi.data.fields import (
     NumericalJointObsField,
     NumericalObsField,
 )
-from scvi.dataloaders import AnnDataLoader
-from scvi.dataloaders._anntorchdataset import AnnTorchDataset
-from scvi.model._utils import (
-    _get_batch_code_from_category,
-    _init_library_size,
-    scrna_raw_counts_properties,
-)
-from scvi.model.base import BaseModelClass
-from scvi.model.base._utils import _de_core
-from scvi.utils import setup_anndata_dsp
-from scvi.train import TrainingPlan, TrainRunner
-from scvi.dataloaders import DataSplitter
-from scvi.model._utils import parse_use_gpu_arg
+from scvi.data import AnnTorchDataset
 from scvi.dataloaders._data_splitting import validate_data_split
+from scvi.model._utils import _init_library_size
+from scvi.model.base import BaseModelClass
+from scvi.utils import setup_anndata_dsp
 
 
 from simvi.module.simvi import SimVIModule
@@ -231,6 +221,7 @@ class SimVIModel(BaseModelClass):
         adata_manager.register_fields(adata, **kwargs)
         cls.register_manager(adata_manager)
 
+    @staticmethod
     def extract_edge_index(
         adata: AnnData,
         batch_key: Optional[str] = None,
@@ -354,10 +345,7 @@ class SimVIModel(BaseModelClass):
             f" {available_representation_kinds}"
         )
 
-        data = AnnTorchDataset(self.adata_manager)
-        data = data[np.arange(data.get_data('X').shape[0])]
-        for key, value in data.items():
-            data[key] = torch.Tensor(value).to(next(self.module.base_encoder.parameters()).device)
+        data = _load_full_data(self.adata_manager, next(self.module.base_encoder.parameters()).device)
         outputs = self.module.inference(data,edge_index,eval_mode=True)
         latent = []
         if representation_kind == "intrinsic":
@@ -402,10 +390,7 @@ class SimVIModel(BaseModelClass):
                 with shape `(n_cells, n_cells)`.
         """
 
-        data = AnnTorchDataset(self.adata_manager)
-        data = data[np.arange(data.get_data('X').shape[0])]
-        for key, value in data.items():
-            data[key] = torch.Tensor(value).to(next(self.module.base_encoder.parameters()).device)
+        data = _load_full_data(self.adata_manager, next(self.module.base_encoder.parameters()).device)
         inference_input = self.module._get_inference_input_from_concat_tensors(data,eval_mode=True)
         q_m, q_v, z = self.module.base_encoder(inference_input["x"], inference_input["batch_index"])
         q_l = self.module.gat_mean.lin_l(q_m[:,-self.module.n_spatial:])
@@ -539,10 +524,7 @@ class SimVIModel(BaseModelClass):
         """
         
         if adata is None:
-            data = AnnTorchDataset(self.adata_manager)
-            data = data[np.arange(data.get_data('X').shape[0])]
-            for key, value in data.items():
-                data[key] = torch.Tensor(value).to(next(self.module.base_encoder.parameters()).device)
+            data = _load_full_data(self.adata_manager, next(self.module.base_encoder.parameters()).device)
             outputs = self.module.inference(data,edge_index,eval_mode=True)
         
             batch_index = outputs["batch_index"]
@@ -747,10 +729,7 @@ class SimVIModel(BaseModelClass):
         self.module = self.module.to(device)
         edge_index = edge_index.to(device)
 
-        data = AnnTorchDataset(self.adata_manager)
-        data = data[np.arange(data.get_data('X').shape[0])]
-        for key, value in data.items():
-            data[key] = torch.Tensor(value).to(device)
+        data = _load_full_data(self.adata_manager, device)
 
         optimizer = optim.Adam(self.module.parameters(), lr=lr, weight_decay=weight_decay)
         train_loss = []
@@ -808,11 +787,20 @@ class SimVIModel(BaseModelClass):
             pbar.set_description('Epoch '+str(epoch)+'/'+str(max_epochs))
             pbar.set_postfix(train_loss=train_loss[epoch-1], val_loss=val_loss[epoch-1])
 
+        self.is_trained_ = True
         return train_loss, val_loss
 
 #--------------------------------------------
 # Helper Methods: _train, _eval, return_f_pv
 #--------------------------------------------
+
+def _load_full_data(adata_manager, device):
+    """
+    Load every registered field for all cells as tensors on `device`.
+    """
+    dataset = AnnTorchDataset(adata_manager)
+    data = dataset[np.arange(adata_manager.adata.n_obs)]
+    return {key: torch.as_tensor(value, device=device) for key, value in data.items()}
 
 def _train(model, data, edge_index, mask, train_loader, optimizer, batch_size, weight, eval_mode):
     """
@@ -837,7 +825,7 @@ def _train(model, data, edge_index, mask, train_loader, optimizer, batch_size, w
         loss.backward()
         #clip_grad_value_(model.parameters(), clip_value=1)
         optimizer.step()
-        train_loss.append(loss.detach())
+        train_loss.append(loss.detach().cpu())
     else:
         batch_indices = [mask[i:i + batch_size] for i in range(0, mask.shape[0], batch_size)]
         
